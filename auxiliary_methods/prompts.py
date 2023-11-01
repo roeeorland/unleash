@@ -1,5 +1,6 @@
 import pandas as pd
 from auxiliary_methods.vector_db import *
+# from auxiliary_methods.vector_db import *
 
 
 def construct_system_prompt(best_example):
@@ -38,6 +39,15 @@ Action: {'action': 'count', 'dataframe': 'title_basics', 'solved': True}""",
 "Relevant_Functions": ['filter', 'count'],
 "Relevant_Tables": ['title_basics']},
 
+{"Question":"How many movies were released in the last year?",
+             "Solution": """Thought: we need to filter title_basics on movies with the maximum in the startYear column
+Action:{'action': 'filter', 'dataframe': 'title_basics',  'condition': 'titleType=="movie" and startYear=startYear.max()', 'solved': False}
+Observation: The dataframe title_basics now only have rows for movies from 2010
+Thought: We need to know how many movies are in the list, and that is the answer to the question
+Action: {'action': 'count', 'dataframe': 'title_basics', 'solved': True}""",
+"Relevant_Functions": ['filter', 'count'],
+"Relevant_Tables": ['title_basics']},
+
 {"Question": "How many actors were born in 2001?",
  "Solution": """
 Thought: First we need to find a list of actors born in 2001
@@ -64,16 +74,29 @@ Observation: We now have our answer""",
 
 {"Question": "What is the series with the most episodes?",
 "Solution": """Thought: We need to find the highest episode number.
-Action:{'action': 'filter', 'dataframe': 'title_episodes', 'condition': 'episodeNumber==episodeNumber.max()', 'solved': False}
+Action:{'action': 'filter', 'dataframe': 'title_episode', 'condition': 'episodeNumber==episodeNumber.max()', 'solved': False}
 Observation: We now have a dataframe with the highest value of episodeNumber
 Thought: We need to extract the title of the show from the dataframe, but since we only have the parentTconst value of the show, we'll join with a table that has the title"
 Action: {'action': 'join', 'left': 'title_episodes', 'right': 'title_basics', 'left_on': 'parentTconst', 'right_on': 'tconst', 'solved': False}
-Observation: we now have a dataframe where every row has the most episodes and 
+Observation: Now in the dataframe title_episodes every row has the most episodes.
+Thought: We need to extract the episode number.
+Action: {'action': 'get_value', 'dataframe': 'title_episode', 'column': 'episodeNumber', 'solved': True}
 """,
-"Relevant_Functions": ['filter', 'join'],
+"Relevant_Functions": ['filter', 'join', 'get_value'],
 "Relevant_Tables": ['title_episode', 'title_basics']
+},
+{"Question": "In how many horror movies did Sean Connery perform?",
+ "Solution": """Thought: We need the movies of the horror genre that Sean Connery has performed in.
+ Action: {'action': 'get_relevant_filmography', 'person': 'Sean Connery', 'genre': 'horror','solved': False}
+ Observation: We have a dataframe (title_principals) of Sean Connery's horror films
+ 
+ Thought: We need to count how long title_principals is.
+ Action: {'action': 'count', 'dataframe': 'title_principals', 'solved': True}
+ Observation: We now know how many horror films Sean Connery performed in
+ """,
+ "Relevant_Functions": ['filter', 'get_relevant_filmography', 'count'],
+ "Relevant_Tables": ["title_principals", "title_basics"]
 }
-
 ]
 
 
@@ -105,10 +128,23 @@ primaryProfession - a string with at most 3 profession (actor, soundtrack, produ
 knownForTitles - a group of tconst values (the primary key of the title_basics dataframe) each representing a title  the person is known for""",
 
 "title_episode":
-"""'title_episode - a dataframe of episode. Columns include:
+"""'title_episode - a dataframe of episodes. Columns include:
 tconst - a unique string for each episode, 
 parentTconst - the identifier of the entire show (many episodes can be from the same show),
-seasonNumber - number of the season's show that the episode was on (an integer)"""
+episodeNumber - the episode's number in the entire history of the show,
+seasonNumber - number of the season's show that the episode was on (an integer)""",
+
+"title_principals":
+"""'title_principals' - a dataframe of title principals. Each row relates to a person who worked on the title. Columns include:
+tconst (string) - alphanumeric unique identifier of the title
+ordering (integer) - a number to uniquely identify rows for a given titleId
+nconst (string) - alphanumeric unique identifier of the name/person who worked on the title
+category (string) - the category of job that person was in
+job (string) - the specific job title if applicable, else '0'
+characters (string) - the name of the character played if applicable, else '0'
+
+
+"""
 
 
 }
@@ -135,6 +171,12 @@ and show that it is the final step of the solution to the problem you would give
 So to join title_episodes on the column 'parentTconst' with title_basics on the column 'tconst' you would form the following JSON:
 {'action': 'join', 'left': 'title_episodes', 'right': 'title_basics', 'left_on': 'parentTconst', 'right_on': 'tconst', 'solved': False}""", 
 
+"get_relevant_filmography":
+"""'get_relevant_filmography' gets the filmography of an actor in a specified genre of film and places it into the table 'title_principals'. 
+In essence the title_principals table is filtered to include the rows pertaining to the actor, then is joined with the title_basics WHICH ARE FILTERED BY GENRE and the product of the join is placed in title_principals.
+PLEASE NOTE THAT YOU MUST ALWAYS CAPITALIZE THE FIRST LETTER OF THE GENRE!!! EVEN IF IN THE QUESTION THE GENRE WAS LOWER CASE!!!
+For example: {'action': 'get_relevant_filmography', 'person': 'Brad Pitt', 'genre': 'Action'}""",
+
 "get_value": 
 """'get_value' returns a value from the first row and a specified column of a dataframe. Is useful if there is only one row or if the same value would be in this column for all rows.
 For example: {'action': 'get_value', 'dataframe': 'title_episode', 'column': 'episodeNumber', 'solved': True}"""
@@ -144,8 +186,8 @@ For example: {'action': 'get_value', 'dataframe': 'title_episode', 'column': 'ep
 
 
 
-def create_examples_df(examples):
-    df = pd.DataFrame(examples)
-    df = add_embeddings(df)
-    return df
+# def create_examples_df(examples):
+#     df = pd.DataFrame(examples)
+#     df = add_embeddings(df)
+#     return df
 

@@ -4,7 +4,7 @@ import openai
 import re
 from auxiliary_methods.prompts import *
 from auxiliary_methods.data_cleaning import *
-from auxiliary_methods.vector_db2 import *
+from auxiliary_methods.vector_db import *
 
 
 database_dict = {"name_basics": {"data":None,
@@ -58,22 +58,25 @@ class BIBot:
         user_input = input("What is your question?\n")
         return user_input
     
-
-
     
     def run_pipeline(self):
-        try:
-            idx, question = get_best_match(self.question, self.collection)
-            best_example = EXAMPLES[eval(idx)]
-            self.system_prompt = construct_system_prompt(best_example)
-            self.api_call()
-            self.parse_api_call()
-            for action in self.actions:
-                func = self.assign_function(action)
-                func(action)
-            print(f"The answer is {self.result}.\n\n Care to ask me another?\n")
-        except:
-            print("Failed to answer your question.\n\n Care to ask me another?\n")
+
+    # try:
+        idx, question = get_best_match(self.question, self.collection)
+        best_example = EXAMPLES[eval(idx)]
+        self.system_prompt = construct_system_prompt(best_example)
+        self.api_call()
+        self.parse_api_call()
+        for action in self.actions:
+            func = self.assign_function(action)
+            func(action)
+        if not self.result:
+            print('Could not find the records')
+        else:
+            print(f"The answer is {self.result}.\n\n")
+        print("\n\nCare to ask me another?\n")
+    # except:
+    #     print("Failed to answer your question.\n\n Care to ask me another?\n")
        
     
     
@@ -86,8 +89,7 @@ class BIBot:
                 {"role": "user", "content": self.question}],
             temperature=0)
         self.api_reply = response['choices'][0]['message']['content']
-        print()
-        # print(self.api_reply)
+
 
     def parse_api_call(self):
         actions = re.findall("\{[^\}]+\}", self.api_reply)
@@ -97,19 +99,32 @@ class BIBot:
     
     
     ## Functions
-    def filter(self, action, chunk_size=1000):
+    def filter(self, action, chunk_size=10000):
 
         if not self.tables_dict[action['dataframe']]["isLoaded"]:
             mini_frames = []
+            i = 1
             for chunk in pd.read_csv('datasets/' + action['dataframe'] + '.tsv', delimiter='\t', chunksize=chunk_size):
-                chunk.replace('\\N', 0, inplace=True)
+                if not i%100:
+                    print(f"Read {i * chunk_size} rows of {action['dataframe']}")
+                i += 1
+                q = chunk.query(action['condition'], engine='python').shape[0]
+                
+                chunk.fillna('0', inplace=True)
+                chunk.replace('\\N', '0', inplace=True)
                 chunk = fix_int_type(chunk)
+                
                 chunk = chunk.query(action['condition'], engine='python')
+               
                 if chunk.shape[0]:
                     mini_frames.append(chunk)
+               
             if not mini_frames:
-                print("Could not find any results")
+                print("Could not find any results in the dataframe")
             result_df = pd.concat(mini_frames, ignore_index=True)
+            result_df = result_df.query(action['condition'], engine='python')
+            result_df.reset_index(inplace=True, drop=True)
+            
 
             self.tables_dict[action['dataframe']]["data"] = result_df
             self.tables_dict[action['dataframe']]["isLoaded"] = True
@@ -126,13 +141,35 @@ class BIBot:
         self.result = self.tables_dict[action['dataframe']]["data"].shape[0]
 
     def join(self, action_dict):
-        left = self.tables_dict[action_dict['left']] 
-        right = self.tables_dict[action_dict['right']]
-        self.tables_dict[action_dict['left']] = left.merge(right, left_on=action_dict['left_on'], right_on=action_dict['right_on'], how='inner')
+        left = self.tables_dict[action_dict['left']]['data'] 
+        if not self.tables_dict[action_dict['right']]['isLoaded']:
+            # right = pd.read_csv('datasets/' + action_dict['right'] + '.tsv', delimiter='\t')
+            self.filter({'dataframe':action_dict['right'], 'condition': f'tconst==\'{left["parentTconst"][0]}\''})
+        
+        right = self.tables_dict[action_dict['right']]['data']
+        self.tables_dict[action_dict['left']]['data'] = left.merge(right, left_on=action_dict['left_on'], right_on=action_dict['right_on'], how='inner')
     
     def get_value(self, action_dict):
         column = action_dict['column']
-        self.result = self.tables_dict['dataframe'][column][0]
+        self.result = self.tables_dict[action_dict['dataframe']]['data'][column][0]
+    
+    def get_relevant_filmography(self, action):
+        name = action['person']
+        self.filter({'dataframe': 'name_basics', 'condition': f'primaryName == \'{name}\''})
+        self.get_value({'column': 'nconst', 'dataframe': 'name_basics'})
+        self.filter({'dataframe': 'title_principals', 'condition': f"nconst == \'{self.result}\'"})
+        self.filter({'dataframe': 'title_basics', 'condition': f'genres.str.contains(\"{action["genre"]}\")'})
+        self.join_for_filmography({'left': 'title_principals', 'right': 'title_basics', 'left_on': 'tconst', 'right_on': 'tconst'})
+
+    def join_for_filmography(self, action_dict):
+        if not self.tables_dict[action_dict['right']]['isLoaded']:
+            right = pd.read_csv('datasets/' + action_dict['right'] + '.tsv', delimiter='\t')
+            # self.filter({'dataframe':action_dict['right'], 'condition': f'tconst==\'{left["parentTconst"][0]}\''})
+        else:
+            right = self.tables_dict[action_dict['right']]['data']
+        self.tables_dict[action_dict['left']]['data'] = left.merge(right, left_on=action_dict['left_on'], right_on=action_dict['right_on'], how='inner')
+    
+
         
     def assign_function(self, action):
         return getattr(self, action['action'])
